@@ -1,0 +1,5 @@
+owner: Cloudspert
+git-repo: helm-charts
+pages-branch: gh-pages
+commit-username: chart-releaser
+commit-email: chart-releaser@users.noreply.github.com
