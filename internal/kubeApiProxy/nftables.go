@@ -29,16 +29,25 @@ baseRules = []nftRule{
 cacheSnapshot = map[string]RuleSnapshot{}
 )
 
-func createTable(c *nftables.Conn, tableName string) (*nftables.Table) {
-  tables, err := c.ListTables()
+func getTable(c *nftables.Conn, tableName string) (*nftables.Table) {
+  tables, err := c.ListTablesOfFamily(nftables.TableFamilyIPv4)
   if err != nil {
      fmt.Errorf("could not list chains: %v", err)
   }
   for _ , table := range tables {
-     if table.Name == tableName {
-        return table 
+     if table.Name == tableName  && table.Family == nftables.TableFamilyIPv4 {
+        return table
      }
   }
+  return nil
+}
+
+func createTable(c *nftables.Conn, tableName string) (*nftables.Table) {
+  exitingTable := getTable(c,tableName)
+  if (exitingTable != nil){
+     return exitingTable
+  }
+  log.Printf("Creating table with name: %s",tableName)
   table := c.AddTable(&nftables.Table{
                              Name:   tableName,
                              Family: nftables.TableFamilyIPv4,
@@ -47,11 +56,10 @@ func createTable(c *nftables.Conn, tableName string) (*nftables.Table) {
   return table 
 } 
 
-
 func getChain(c *nftables.Conn, chainName string)(*nftables.Chain) {
-  chains, _ := c.ListChains()
+  chains, _ := c.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
   for _, chain := range chains {
-  	if chain.Name == chainName {
+  	if chain.Name == chainName && chain.Table == natTable  {
  	   return chain
   	}
   }
@@ -60,14 +68,10 @@ func getChain(c *nftables.Conn, chainName string)(*nftables.Chain) {
 
 func createChain(c *nftables.Conn, dstChain *nftables.Chain) (*nftables.Chain) {
   exitingChain := getChain(c, dstChain.Name) 
-  if (exitingChain != nil) && (dstChain.Type != "" || dstChain.Hooknum != nil || dstChain.Priority != nil) {
-     if (dstChain.Type == exitingChain.Type) && (*dstChain.Hooknum == *exitingChain.Hooknum) && (*dstChain.Priority == *exitingChain.Priority) { 
-	return exitingChain
-     } else if exitingChain != nil {
-      c.DelChain(exitingChain)
-      c.Flush()
-     }
+  if (exitingChain != nil){
+    return exitingChain
   }
+  log.Printf("Creating chain with name: %s", dstChain.Name)
   c.AddChain(dstChain)
   c.Flush()
   return dstChain
