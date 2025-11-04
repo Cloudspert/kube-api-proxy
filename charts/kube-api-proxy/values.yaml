@@ -1,5 +1,5 @@
 kubeAPI:
-  externalIP: "127.0.0.1"
+  externalIP: "127.0.0.2"
   internalIP: "127.0.0.1"
   externalPort: 443
   internalPort: 443

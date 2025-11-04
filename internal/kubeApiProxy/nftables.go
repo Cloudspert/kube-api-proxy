@@ -11,78 +11,88 @@ import (
 )
 
 var (
-natTable = &nftables.Table{Name: "nat", Family: nftables.TableFamilyIPv4,}
+natTable = &nftables.Table{Name: "CAAS", Family: nftables.TableFamilyIPv4,}
+
+ChainPriorityCAAS  *nftables.ChainPriority = nftables.ChainPriorityRef(-130)
 
 baseChains = map[string]*nftables.Chain{
-  "PREROUTING":&nftables.Chain{Name: "PREROUTING", Table: natTable, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookPrerouting, Priority: nftables.ChainPriorityNATDest,},
-  "OUTPUT": &nftables.Chain{Name: "OUTPUT", Table: natTable, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookOutput, Priority: nftables.ChainPriorityNATDest,},
+  "PREROUTING":&nftables.Chain{Name: "PREROUTING", Table: natTable, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookPrerouting, Priority: ChainPriorityCAAS,},
+  "OUTPUT": &nftables.Chain{Name: "OUTPUT", Table: natTable, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookOutput, Priority: ChainPriorityCAAS,},
   "CAAS-REDIRECT-API": &nftables.Chain{Name: "CAAS-REDIRECT-API",Table: natTable,},
   "CAAS-CUSTOM-RULES": &nftables.Chain{Name: "CAAS-CUSTOM-RULES",Table: natTable,},
-  }
+}
 
 baseRules = []nftRule{
-	{ruleType: "jump", jumpChain: "CAAS-CUSTOM-RULES", chain: baseChains["PREROUTING"], table: natTable, beforeChain: "KUBE-SERVICES"},
-	{ruleType: "jump", jumpChain: "CAAS-CUSTOM-RULES", chain: baseChains["OUTPUT"], table: natTable, beforeChain: "KUBE-SERVICES"},
-	{ruleType: "filter", table: natTable, chain: baseChains["CAAS-CUSTOM-RULES"], jumpChain: "CAAS-REDIRECT-API"},
+	{ruleType: "jump", jumpChain: baseChains["CAAS-CUSTOM-RULES"], chain: baseChains["PREROUTING"], table: natTable},
+	{ruleType: "jump", jumpChain: baseChains["CAAS-CUSTOM-RULES"], chain: baseChains["OUTPUT"], table: natTable},
+	{ruleType: "filter", table: natTable, chain: baseChains["CAAS-CUSTOM-RULES"], jumpChain: baseChains["CAAS-REDIRECT-API"]},
 	{ruleType: "nat", table: natTable, chain: baseChains["CAAS-REDIRECT-API"]},
 }
+
 cacheSnapshot = map[string]RuleSnapshot{}
 )
 
 func getTable(c *nftables.Conn, tableName string) (*nftables.Table) {
   tables, err := c.ListTablesOfFamily(nftables.TableFamilyIPv4)
+  
   if err != nil {
-     fmt.Errorf("could not list chains: %v", err)
+     fmt.Errorf("Could not list tables: %v", err)
   }
-  for _ , table := range tables {
-     if table.Name == tableName  && table.Family == nftables.TableFamilyIPv4 {
-        return table
+  for _ , t := range tables {
+     if t.Name == tableName {
+        return t
      }
   }
   return nil
 }
 
-func createTable(c *nftables.Conn, tableName string) (*nftables.Table) {
-  exitingTable := getTable(c,tableName)
-  if (exitingTable != nil){
-     return exitingTable
+func createTable(c *nftables.Conn, t *nftables.Table) (*nftables.Table) {
+  existingTable := getTable(c, t.Name)
+
+  if existingTable != nil {
+    return existingTable
   }
-  log.Printf("Creating table with name: %s",tableName)
-  table := c.AddTable(&nftables.Table{
-                             Name:   tableName,
-                             Family: nftables.TableFamilyIPv4,
-		     })
-  c.Flush()
+
+  log.Printf("Creating table with name: %s",t.Name)
+  table := c.AddTable(t)
+  if err := c.Flush(); err != nil {
+      fmt.Errorf("Failed to create table %s: %v", t.Name, err)
+      return nil 
+  }
+
   return table 
 } 
 
-func getChain(c *nftables.Conn, chainName string)(*nftables.Chain) {
+func getChain(c *nftables.Conn, ch *nftables.Chain)(*nftables.Chain) {
   chains, _ := c.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
   for _, chain := range chains {
-  	if chain.Name == chainName && chain.Table == natTable  {
+  	if chain.Name == ch.Name && chain.Table.Name == ch.Table.Name {
  	   return chain
   	}
   }
   return nil
 }
 
-func createChain(c *nftables.Conn, dstChain *nftables.Chain) (*nftables.Chain) {
-  exitingChain := getChain(c, dstChain.Name) 
+func createChain(c *nftables.Conn, ch *nftables.Chain) (*nftables.Chain) {
+  exitingChain := getChain(c, ch) 
   if (exitingChain != nil){
     return exitingChain
   }
-  log.Printf("Creating chain with name: %s", dstChain.Name)
-  c.AddChain(dstChain)
-  c.Flush()
-  return dstChain
+  log.Printf("Creating chain with name: %s", ch.Name)
+  c.AddChain(ch)
+  if err := c.Flush(); err != nil {
+      fmt.Errorf("Failed to create chain %s: %v", ch.Name, err)
+      return nil 
+  }
+  return ch
 }
 
-func getRuleOrder(c *nftables.Conn, table *nftables.Table, chain *nftables.Chain, targetChain string) uint64 {
+func getRuleOrder(c *nftables.Conn, table *nftables.Table, chain *nftables.Chain, targetChain *nftables.Chain) uint64 {
    rules, _ := c.GetRules(table,chain)
    for _ , rule := range rules {
       for _ , exp := range rule.Exprs {
          verdict, ok := exp.(*expr.Verdict) 
-	 if ok && verdict.Chain == targetChain {
+	 if ok && verdict.Chain == targetChain.Name {
 	    return rule.Position
 	 }
       }
@@ -163,11 +173,11 @@ func checkRules(c *nftables.Conn, ruleObj *nftables.Rule, rule *nftRule, cache *
             }
         }
         if hashExists {
-            if rule.beforeChain != "" {
+            if rule.beforeChain != nil {
                 targetRulePosition := getRuleOrder(c, rule.table, rule.chain, rule.beforeChain)
 		rulePosition := getRuleOrder(c, rule.table, rule.chain, rule.jumpChain)
                 if rulePosition > targetRulePosition {
-		    log.Printf("Found rule with name %s before our rule, we need to change rule order",rule.beforeChain  )
+		    log.Printf("Found rule with name %s before our rule, we need to change rule order",rule.beforeChain.Name  )
                     c.DelRule(getRule(c, ruleObj))
                     c.Flush()
                     return true
@@ -220,7 +230,7 @@ func createRule(c *nftables.Conn, rule *nftRule, cache *map[string]RuleSnapshot)
                                    },
                                    &expr.Verdict{
                                    	Kind: expr.VerdictJump,
-                                   	Chain: rule.jumpChain,},},}
+                                   	Chain: rule.jumpChain.Name,},},}
       case "jump":
            r = &nftables.Rule{
       	        Table: rule.table,
@@ -228,7 +238,7 @@ func createRule(c *nftables.Conn, rule *nftRule, cache *map[string]RuleSnapshot)
                       Exprs: []expr.Any{
                                 &expr.Verdict{
                                  	Kind: expr.VerdictJump,
-                                 	Chain: rule.jumpChain,},}}
+                                 	Chain: rule.jumpChain.Name,},}}
       case "nat":
           r = &nftables.Rule{
              	Table: rule.table,
@@ -258,7 +268,7 @@ func createRule(c *nftables.Conn, rule *nftRule, cache *map[string]RuleSnapshot)
              		},},}
   }
   if checkRules(c,r,rule,cache) { 
-     if (rule.beforeChain != "") && (getChain(c,rule.beforeChain) != nil) {
+     if (rule.beforeChain != nil) && (getChain(c,rule.beforeChain) != nil) {
         insertOrder := getRuleOrder(c, rule.table, rule.chain, rule.beforeChain)
 	r.Position = insertOrder 
         c.InsertRule(r)

@@ -21,13 +21,13 @@ func Reconcile(kubeAPIExternalIP string, kubeAPIInternalIP string, kubeAPIExtern
    c := &nftables.Conn{}
    ticker := time.NewTicker(time.Duration(syncPeriod) * time.Second)
    log.Println("Starting Kube Api Proxy")
-   log.Printf("Redirecting Connection to api from %s on port %d to %s on port %d", kubeAPIExternalIP, kubeAPIInternalPort, kubeAPIExternalIP, kubeAPIExternalPort )
+   log.Printf("Redirecting Connection to api from %s on port %d to %s on port %d", kubeAPIInternalIP, kubeAPIInternalPort, kubeAPIExternalIP, kubeAPIExternalPort)
 
    defer ticker.Stop()
    for {
    	select {
            case <-ticker.C:
-             createTable(c, "nat")
+             createTable(c, natTable)
              for _ , chain := range baseChains {
                  createChain(c, chain)
              }

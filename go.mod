@@ -1,6 +1,6 @@
 module kube-api-proxy
 
-go 1.23.4
+go 1.25
 
 require (
 	github.com/google/nftables v0.3.0

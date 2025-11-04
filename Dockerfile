@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.23.4 as builder
+FROM golang:1.25.3 as builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -23,11 +23,16 @@ COPY internal/kubeApiProxy/ internal/kubeApiProxy/
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o kube-api-proxy cmd/main.go
-
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
-WORKDIR /
-COPY --from=builder /workspace/kube-api-proxy .
-USER 65532:65532
-ENTRYPOINT
+FROM debian:12-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        nftables \
+        iproute2 \
+        iputils-ping \
+        bash && \
+    rm -rf /var/lib/apt/lists/*
+RUN mkdir /opt/kube-api-proxy
+WORKDIR /opt/kube-api-proxy
+COPY --from=builder /workspace/kube-api-proxy main
+USER 0
+ENTRYPOINT ["/opt/kube-api-proxy/main"]

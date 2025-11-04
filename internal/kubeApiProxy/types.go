@@ -13,14 +13,14 @@ type chainLocation struct {
 
 type nftRule struct {
      ruleType      string
-     jumpChain     string
+     jumpChain     *nftables.Chain
      table         *nftables.Table
      chain         *nftables.Chain
      originalIP    []byte
      modifiedIP    []byte
      originalPort  []byte
      modifiedPort  []byte
-     beforeChain   string
+     beforeChain   *nftables.Chain
 }
 
 type RuleSnapshot struct {
